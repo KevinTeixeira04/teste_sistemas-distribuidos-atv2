@@ -1,9 +1,11 @@
 import hashlib
+import json
 import socket
 import threading
 import uuid
 
 import pytest
+import zmq
 
 from src.client.crypto import CryptoManager
 from src.client.pipeline import DFSClient
@@ -82,3 +84,114 @@ def test_cleanup_removes_interrupted_writes(node):
     leftover.write_bytes(b"pela metade")
     node._cleanup_tmp()
     assert not leftover.exists()
+
+
+@pytest.fixture
+def two_nodes(tmp_path, monkeypatch):
+    monkeypatch.setattr(node_module.wrapperKazoo, "init", lambda: None)
+    monkeypatch.setattr(node_module.wrapperKazoo, "register_storage", lambda *a, **k: None)
+
+    nodes = []
+    threads = []
+
+    for node_id, directory in (("source", "source"), ("destination", "destination")):
+        storage = IntegrityNode(
+            node_id,
+            "127.0.0.1",
+            free_port(),
+            str(tmp_path / directory),
+            scrub_interval=0,
+        )
+        storage.start()
+
+        thread = threading.Thread(target=storage.serve_forever, daemon=True)
+        thread.start()
+
+        nodes.append(storage)
+        threads.append(thread)
+
+    yield nodes[0], nodes[1]
+
+    for storage in nodes:
+        storage.request_stop()
+
+    for thread in threads:
+        thread.join(timeout=3)
+
+    for storage in nodes:
+        storage.stop()
+
+
+def request_copy_block(destination, source, block_id):
+    context = zmq.Context()
+    sock = context.socket(zmq.DEALER)
+
+    try:
+        sock.setsockopt(zmq.IDENTITY, str(uuid.uuid4()).encode("utf-8"))
+        sock.setsockopt(zmq.RCVTIMEO, 5000)
+        sock.setsockopt(zmq.SNDTIMEO, 5000)
+        sock.setsockopt(zmq.LINGER, 0)
+
+        request = {
+            "req_id": str(uuid.uuid4()),
+            "action": "COPY_BLOCK",
+            "block_id": block_id,
+            "source_addr": source.addr,
+        }
+
+        sock.connect(destination.addr)
+        sock.send_multipart([
+            b"",
+            json.dumps(request).encode("utf-8"),
+        ])
+
+        frames = sock.recv_multipart()
+        assert len(frames) == 2
+
+        return json.loads(frames[1].decode("utf-8"))
+
+    finally:
+        sock.close()
+        context.term()
+
+
+def test_copy_block_between_nodes(two_nodes, client):
+    source, destination = two_nodes
+    block_id = str(uuid.uuid4())
+    data = b"conteudo transferido entre dois storages"
+
+    client._send_block_to_storage(source.addr, block_id, sha(data), data)
+
+    response = request_copy_block(destination, source, block_id)
+
+    assert response["status"] == "ACK"
+    assert response["size_bytes"] == len(data)
+    assert destination._get_block({"block_id": block_id}) == data
+    assert (destination.storage_path / f"{block_id}.meta").exists()
+
+
+def test_copy_block_fails_when_source_block_does_not_exist(two_nodes):
+    source, destination = two_nodes
+    block_id = str(uuid.uuid4())
+
+    response = request_copy_block(destination, source, block_id)
+
+    assert response["status"] != "ACK"
+    assert not (destination.storage_path / block_id).exists()
+    assert not (destination.storage_path / f"{block_id}.meta").exists()
+
+
+def test_copy_block_rejects_corrupted_source(two_nodes, client):
+    source, destination = two_nodes
+    block_id = str(uuid.uuid4())
+    data = b"conteudo original do bloco"
+
+    client._send_block_to_storage(source.addr, block_id, sha(data), data)
+
+    (source.storage_path / block_id).write_bytes(b"conteudo adulterado")
+
+    response = request_copy_block(destination, source, block_id)
+
+    assert response["status"] != "ACK"
+    assert not (destination.storage_path / block_id).exists()
+    assert not (destination.storage_path / f"{block_id}.meta").exists()

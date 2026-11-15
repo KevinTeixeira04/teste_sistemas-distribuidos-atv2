@@ -14,6 +14,8 @@ from pathlib import Path
 
 import zmq
 
+from src.storage.block_copy import BlockTransferError, fetch_block
+
 from src.wrapper import wrapperKazoo
 
 
@@ -176,6 +178,23 @@ class StorageNodeServer:
                     "code": "OK",
                     "req_id": req_id,
                     "size_bytes": len(response_data),
+                    "sha256": hashlib.sha256(response_data).hexdigest(),
+                }
+
+            elif action == "COPY_BLOCK":
+                if len(frames) != 3:
+                    raise NodeRequestError(
+                        "INVALID_REQUEST",
+                        "COPY_BLOCK exige somente os metadados.",
+                    )
+
+                block_size = self._copy_block(metadata)
+
+                response = {
+                    "status": "ACK",
+                    "code": "OK",
+                    "req_id": req_id,
+                    "size_bytes": block_size,
                 }
 
             else:
@@ -295,6 +314,33 @@ class StorageNodeServer:
                 "BLOCK_NOT_FOUND",
                 f"Bloco {block_id} não encontrado.",
             )
+
+    def _copy_block(self, metadata: dict) -> int:
+        """Obtém um bloco de outro nó e armazena uma cópia local."""
+
+        block_id = metadata.get("block_id")
+        self._block_path(block_id)
+
+        source_addr = metadata.get("source_addr")
+        if not isinstance(source_addr, str) or not source_addr.strip():
+            raise NodeRequestError(
+                "INVALID_SOURCE",
+                "Endereço do nó de origem inválido.",
+            )
+
+        try:
+            data, expected_hash = fetch_block(
+                self.context,
+                source_addr,
+                block_id,
+            )
+        except BlockTransferError as error:
+            raise NodeRequestError(error.code, error.message) from error
+
+        return self._put_block(
+            {"block_id": block_id, "sha256": expected_hash},
+            data,
+        )
 
     def _send_response(
         self,
