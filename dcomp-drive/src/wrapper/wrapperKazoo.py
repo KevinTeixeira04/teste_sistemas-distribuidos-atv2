@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 import time
+import numpy as np
 from kazoo.client import ChildrenWatch, Election, KazooClient, KazooState
 
 """ Mantém uma única conexão ZooKeeper compartilhada pelo wrapper
@@ -45,38 +46,45 @@ def init():
         zk.ensure_path(path)
     logging.info("Init completo")
 
-def register_storage(name, disks, available, addr, host=None):
+def register_storage(name, disks:{str, np.array}, available, addr):
     """
     Registra um nó de armazenamento no ZooKeeper.
 
     name: identificador do nó.
-    disks: capacidade total de cada disco.
+    disks: capacidade total de cada disco. : dict {"nome", np.array(usado, capacidade)}
     available: espaço disponível em cada disco.
     addr: endereço RPC do nó.
-    host: identificação da máquina onde o nó está executando.
     """
     if not name or not addr:
         raise ValueError("Nome e endereço do nó são obrigatórios.")
 
-    data = {
-        "addr": addr,
-        "host": host or name,
-        "disks": [
-            {"disk": index, "total": disk, "available": disk_available}
-            for index, (disk, disk_available) in enumerate(
-                zip(disks, available), start=1
-            )
-        ],
-    }
-
     path = f"/storage/nodes/{name}"
     zk = _get_zk()
-
+    
     if zk.exists(path):
         zk.delete(path)
 
+    data = {
+        "addr": addr
+    }
+    
     zk.create(path, json.dumps(data).encode("utf-8"), ephemeral=True)
     logging.info("Nó %s registrado no ZooKeeper", name)
+
+    #Criação de nós filhos (discos) no nó mae (maquina)
+
+    for disk_name, disk_size_arr in disks.items():
+        disk_capacity = disk_size_arr[1]
+        disk_used = disk_size_arr[0]
+
+        data = {
+            "nome": disk_name,
+            "capacity": disk_capacity,
+            "used": disk_used
+        }
+        zk.create(path + f"/{disk_name}", json.dumps(data).encode("utf-8"), ephemeral=True)
+        logging.info(f"Disco {disk_name} registrado no ZooKeeper no diretorio de {name}")
+    
 
 def get_node(path):
     """
