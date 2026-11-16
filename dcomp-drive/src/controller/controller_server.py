@@ -6,6 +6,10 @@ import queue
 import signal
 import threading
 import time
+from src.controller.config import settings
+from src.controller.db import Database
+from src.controller.registry import NodeRegistry
+from src.wrapper import wrapperKazoo as wzk
 from concurrent.futures import ThreadPoolExecutor
 
 import zmq
@@ -176,11 +180,7 @@ class ControllerServer:
         return handler
 
 
-def main():
-    from src.controller.config import settings
-    from src.controller.db import Database
-    from src.controller.registry import NodeRegistry
-
+def leader():
     logging.basicConfig(
         level=settings.log_level,
         format="%(asctime)s %(levelname)s %(threadName)s %(message)s",
@@ -199,7 +199,16 @@ def main():
     finally:
         registry.stop()
         db.close()
-
+#revisar pq deve ta super errado
+def main():
+    wzk.init()
+    while(True)
+        do:
+            election = wzk.ElectionController(os.getenv("container_name")) #n lembro
+        while election is None
+        election.run(leader)
+    
+    
 
 if __name__ == "__main__":
     main()
