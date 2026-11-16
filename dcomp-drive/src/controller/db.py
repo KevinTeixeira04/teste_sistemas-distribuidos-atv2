@@ -13,67 +13,37 @@ logger = logging.getLogger(__name__)
 """ Scheema de metadados do DFS """
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS inodes (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS inodes ( --essa tabela forma a "arvore" de arquivos montada a partir de todas as maquinas, tabela "abstrata"
+    id BIGSERIAL NOT NULL,
     parent_id BIGINT REFERENCES inodes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     is_dir BOOLEAN NOT NULL DEFAULT FALSE,
-    current_version TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    mtime TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (parent_id, name)
+    state TEXT NOT NULL, -- em replicação, sub-replicado ou ok
+    UNIQUE (parent_id, name),
+    UNIQUE (id, maquina) -- dois inodes podem ter o mesmo id mas maquinas diferentes (obviamente o contrario é verdade)
+);
+
+CREATE TABLE IF NOT EXISTS maquina (
+    nome PRIMARY KEY, --nome da maquina (de preferencia definido la no docker)
+    draining BOOLEAN
+    --falta algo?
 );
 
 INSERT INTO inodes (id, parent_id, name, is_dir)
-VALUES (1, NULL, '', TRUE)
+VALUES (1, NULL, NULL, 'root/', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
-CREATE TABLE IF NOT EXISTS file_versions (
-    version_id TEXT PRIMARY KEY,
-    inode_id BIGINT NOT NULL REFERENCES inodes(id) ON DELETE CASCADE,
-    path TEXT NOT NULL,
-    size_bytes BIGINT NOT NULL DEFAULT 0,
-    file_sha256 TEXT,
-    encrypted BOOLEAN NOT NULL DEFAULT FALSE,
-    state TEXT NOT NULL,
-    writer TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    committed_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_versions_state
-    ON file_versions(state);
-
-CREATE INDEX IF NOT EXISTS idx_versions_inode
-    ON file_versions(inode_id);
-
-CREATE TABLE IF NOT EXISTS blocks (
+CREATE TABLE IF NOT EXISTS blocks ( --representa fisicamente onde tao as coisa, tabela menos abstrata
     block_id TEXT PRIMARY KEY,
-    version_id TEXT NOT NULL
-        REFERENCES file_versions(version_id) ON DELETE CASCADE,
+    inode_id REFERENCES inodes(id),
+    maquina REFERENCES maquina(nome), --quais maquinas estou salvo?
     idx INTEGER NOT NULL,
     size_bytes BIGINT NOT NULL DEFAULT 0,
     sha256 TEXT NOT NULL,
-    state TEXT NOT NULL,
+    state TEXT NOT NULL, -- ?
     UNIQUE (version_id, idx)
 );
-
-CREATE TABLE IF NOT EXISTS replicas (
-    block_id TEXT NOT NULL
-        REFERENCES blocks(block_id) ON DELETE CASCADE,
-    node_id TEXT NOT NULL,
-    state TEXT NOT NULL,
-    disk TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (block_id, node_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_replicas_node
-    ON replicas(node_id);
-
-CREATE INDEX IF NOT EXISTS idx_replicas_scrub
-    ON replicas(state, updated_at);
 
 CREATE TABLE IF NOT EXISTS write_leases (
     path TEXT PRIMARY KEY,
@@ -84,12 +54,6 @@ CREATE TABLE IF NOT EXISTS write_leases (
 
 CREATE INDEX IF NOT EXISTS idx_leases_version
     ON write_leases(version_id);
-
-CREATE TABLE IF NOT EXISTS node_flags (
-    node_id TEXT PRIMARY KEY,
-    draining BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 """
 
 
