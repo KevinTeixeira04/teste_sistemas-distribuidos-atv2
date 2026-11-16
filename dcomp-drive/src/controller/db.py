@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS maquina (
     --falta algo?
 );
 
+CREATE TABLE IF NOT EXISTS disco (
+    disco_id PRIMARY KEY,
+    maquina REFERENCES maquina(nome) --a qual maquina eu pertenço?
+)
+
 INSERT INTO inodes (id, parent_id, name, is_dir)
 VALUES (1, NULL, NULL, 'root/', TRUE)
 ON CONFLICT (id) DO NOTHING;
@@ -37,7 +42,7 @@ ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS blocks ( --representa fisicamente onde tao as coisa, tabela menos abstrata
     block_id TEXT PRIMARY KEY,
     inode_id REFERENCES inodes(id),
-    maquina REFERENCES maquina(nome), --quais maquinas estou salvo?
+    disco_id references disco(disco_id), --quais discos estou salvo? pode deduzir as maquinas facilmente
     idx INTEGER NOT NULL,
     size_bytes BIGINT NOT NULL DEFAULT 0,
     sha256 TEXT NOT NULL,
