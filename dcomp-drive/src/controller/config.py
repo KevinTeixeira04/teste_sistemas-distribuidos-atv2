@@ -29,6 +29,12 @@ class Settings:
     # monitoramento dos nós
     heartbeat_interval: int
     heartbeat_timeout: int
+    membership_interval_s: float   
+    suspect_after_s: float         
+    dead_after_s: float            
+
+    # servidor RPC
+    rpc_workers: int               
 
     # logs
     log_level: str
@@ -70,6 +76,12 @@ def load_settings() -> Settings:
         heartbeat_interval=_get_int("HEARTBEAT_INTERVAL", 5),
         heartbeat_timeout=_get_int("HEARTBEAT_TIMEOUT", 15),
 
+        membership_interval_s=float(os.getenv("MEMBERSHIP_INTERVAL_S", "2")),
+        suspect_after_s=float(os.getenv("SUSPECT_AFTER_S", "10")),
+        dead_after_s=float(os.getenv("DEAD_AFTER_S", "30")),
+
+        rpc_workers=_get_int("RPC_WORKERS", 8),
+
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )
 
@@ -96,6 +108,12 @@ def load_settings() -> Settings:
         raise ValueError(
             "HEARTBEAT_TIMEOUT deve ser maior que HEARTBEAT_INTERVAL."
         )
+
+    if settings.rpc_workers < 1:
+        raise ValueError("RPC_WORKERS deve ser maior que zero.")
+
+    if settings.suspect_after_s >= settings.dead_after_s:
+        raise ValueError("SUSPECT_AFTER_S deve ser menor que DEAD_AFTER_S.")
 
     return settings
 

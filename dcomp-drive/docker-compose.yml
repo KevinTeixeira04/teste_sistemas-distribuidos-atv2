@@ -35,7 +35,7 @@ services:
   controller:
     build: .
     container_name: dfs-controller
-    command: python -m src.controller.server
+    command: python -m src.controller.controller_server
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +48,8 @@ services:
       DB_NAME: dfs_metadata
       DB_USER: postgre
       DB_PASSWORD: postgre
+      SUSPECT_AFTER_S: "86400"
+      DEAD_AFTER_S: "172800"
     ports:
       - "5000:5000"
 
