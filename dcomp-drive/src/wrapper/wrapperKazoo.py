@@ -3,7 +3,6 @@ import json
 import logging
 import threading
 import time
-import numpy as np
 from dataclasses import dataclass
 from kazoo.client import ChildrenWatch, Election, KazooClient, KazooState
 
