@@ -4,10 +4,18 @@ import logging
 import threading
 import time
 import numpy as np
+from dataclasses import dataclass
 from kazoo.client import ChildrenWatch, Election, KazooClient, KazooState
 
 """ Mantém uma única conexão ZooKeeper compartilhada pelo wrapper
 Ela começa como None e será criada na primeira chamada de _get_zk() """
+
+@dataclass
+class Disco:
+    nome: str
+    capacidade: int
+    atual: int
+
 
 _zk: KazooClient | None = None
 
@@ -46,12 +54,12 @@ def init():
         zk.ensure_path(path)
     logging.info("Init completo")
 
-def register_storage(name, disks:{str, np.array}, available, addr):
+def register_storage(name, disks:np.list[Disco], available, addr):
     """
     Registra um nó de armazenamento no ZooKeeper.
 
     name: identificador do nó.
-    disks: capacidade total de cada disco. : dict {"nome", np.array(usado, capacidade)}
+    disks: capacidade total de cada disco. Lista de Disco 
     available: espaço disponível em cada disco.
     addr: endereço RPC do nó.
     """
@@ -73,17 +81,14 @@ def register_storage(name, disks:{str, np.array}, available, addr):
 
     #Criação de nós filhos (discos) no nó mae (maquina)
 
-    for disk_name, disk_size_arr in disks.items():
-        disk_capacity = disk_size_arr[1]
-        disk_used = disk_size_arr[0]
-
+    for disk in disks():
         data = {
-            "nome": disk_name,
-            "capacity": disk_capacity,
-            "used": disk_used
+            "nome": disk.nome,
+            "capacity": disk.capacidade,
+            "used": disk.atual
         }
-        zk.create(path + f"/{disk_name}", json.dumps(data).encode("utf-8"), ephemeral=True)
-        logging.info(f"Disco {disk_name} registrado no ZooKeeper no diretorio de {name}")
+        zk.create(path + f"/{disk.nome}", json.dumps(data).encode("utf-8"), ephemeral=True)
+        logging.info(f"Disco {disk.nome} registrado no ZooKeeper no diretorio de {name}")
     
 
 def get_node(path):
