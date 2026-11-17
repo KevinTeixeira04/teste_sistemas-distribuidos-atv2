@@ -6,6 +6,7 @@ chamada uma vez com os filhos que já existem. O registry só usa o que o wrappe
 já oferece: init, get_node e set_storage_watch(remove_func, add_func).
 """
 import json
+import time
 import types
 
 import pytest
@@ -163,3 +164,20 @@ def test_stopped_registry_ignores_events(zk):
     old.stop()  # perdeu a liderança
     zk.register("node2")
     assert "node2" not in old.get_nodes()
+
+
+def test_node_removed_from_zk_stays_dead_even_without_heartbeats(zk):
+    """Com os limites de tempo altos (docker-compose) o monitor não pode ressuscitar um nó que saiu do ZooKeeper."""
+    zk.register("node1")
+    config = types.SimpleNamespace(membership_interval_s=0.05, suspect_after_s=86400, dead_after_s=172800)
+    r = NodeRegistry(config, db=None)
+    r.start()
+    try:
+        zk.unregister("node1")
+        time.sleep(0.4)                                   # vários ciclos do monitor
+        assert r.get_nodes()["node1"]["state"] == "DEAD"
+        assert r.heartbeat("node1") is False              # sem znode, um heartbeat atrasado também não o reanima
+        zk.register("node1")                              # o nó voltou: aí sim fica vivo de novo
+        assert r.get_nodes()["node1"]["state"] == "ALIVE"
+    finally:
+        r.stop()
