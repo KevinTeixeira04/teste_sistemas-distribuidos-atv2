@@ -53,41 +53,36 @@ def init():
         zk.ensure_path(path)
     logging.info("Init completo")
 
-def register_storage(name, disks:list[Disco], available, addr):
+def register_storage(name, disks: list[Disco], addr, host=None):
     """
-    Registra um nó de armazenamento no ZooKeeper.
+    Registra um nó de armazenamento no ZooKeeper (znode efêmero).
 
     name: identificador do nó.
-    disks: capacidade total de cada disco. Lista de Disco 
-    available: espaço disponível em cada disco.
+    disks: lista de Disco(nome, capacidade, atual).
     addr: endereço RPC do nó.
+    host: máquina onde o nó roda (padrão: o próprio name).
     """
     if not name or not addr:
         raise ValueError("Nome e endereço do nó são obrigatórios.")
 
     path = f"/storage/nodes/{name}"
     zk = _get_zk()
-    
+
     if zk.exists(path):
         zk.delete(path)
 
     data = {
-        "addr": addr
+        "addr": addr,
+        "host": host or name,
+        "disks": [
+            {"nome": d.nome, "capacity": d.capacidade, "used": d.atual}
+            for d in disks
+        ],
     }
-    
+
+    # znode efêmero não pode ter filhos, então os discos vão dentro do próprio JSON
     zk.create(path, json.dumps(data).encode("utf-8"), ephemeral=True)
-    logging.info("Nó %s registrado no ZooKeeper", name)
-
-    #Criação de nós filhos (discos) no nó mae (maquina)
-
-    for disk in disks():
-        data = {
-            "nome": disk.nome,
-            "capacity": disk.capacidade,
-            "used": disk.atual
-        }
-        zk.create(path + f"/{disk.nome}", json.dumps(data).encode("utf-8"), ephemeral=True)
-        logging.info(f"Disco {disk.nome} registrado no ZooKeeper no diretorio de {name}")
+    logging.info("Nó %s registrado no ZooKeeper com %d disco(s)", name, len(disks))
     
 
 def get_node(path):

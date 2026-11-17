@@ -81,16 +81,18 @@ class DFSClient:
             res = json.loads(raw_res.decode("utf-8"))
 
             if res.get("status") != "ACK":
-                raise RuntimeError(f"Erro ao ler bloco {block_id} de {node_addr}: {res.get('status')}")
+                if res.get("code") == "BLOCK_CORRUPT": #tenta outra replica, mas avisa o controlador que esse nó está com problema 
+                    raise ValueError(f"nó {node_addr} informou bloco {block_id} corrompido")
+                raise RuntimeError(f"Erro ao ler bloco {block_id} de {node_addr}: {res.get('code') or res.get('status')}")            
             return data
         finally:
             sock.close()
 
-    def put_file(self, local_path: str, remote_path: str) -> dict:
+    def put_file(self, local_path: str, remote_path: str) -> dict: #atualização nessa função para não deixar o arquivo preso em escrevendo desnecessariamente
         path = Path(local_path)
         if not path.is_file():
             raise FileNotFoundError(f"Arquivo não encontrado: {local_path}")
-            
+
         file_size = path.stat().st_size
         logger.info(f"Iniciando upload de '{local_path}' -> '{remote_path}'", extra={"evento": "UPLOAD_START", "identificador": remote_path})
 
@@ -108,46 +110,53 @@ class DFSClient:
         }, identificador=remote_path)
         file_id = init_res["file_id"]
 
-        blocks_sent = 0
-        with open(path, "rb") as f:
-            block_index = 0
-            while chunk := f.read(self.chunk_size):
-                payload, block_sha256 = self.crypto.process_outgoing_block(chunk)
-                block_id = str(uuid.uuid4())
+        try:
+            blocks_sent = 0
+            with open(path, "rb") as f:
+                block_index = 0
+                while chunk := f.read(self.chunk_size):
+                    payload, block_sha256 = self.crypto.process_outgoing_block(chunk)
+                    block_id = str(uuid.uuid4())
 
-                alloc_res = self._rpc_controller("ALLOCATE_BLOCK", {
-                    "file_id": file_id,
-                    "block_id": block_id,
-                    "block_index": block_index,
-                    "size_bytes": len(payload),
-                    "sha256": block_sha256,
-                }, identificador=block_id)
-                
-                target_nodes = alloc_res["nodes"]
-                logger.info(f"Alocado nos nós: {[n['node_id'] for n in target_nodes]}", extra={"evento": "BLOCK_ALLOCATED", "identificador": block_id})
+                    alloc_res = self._rpc_controller("ALLOCATE_BLOCK", {
+                        "file_id": file_id,
+                        "block_id": block_id,
+                        "block_index": block_index,
+                        "size_bytes": len(payload),
+                        "sha256": block_sha256,
+                    }, identificador=block_id)
 
-                committed_node_ids = []
-                for node in target_nodes:
-                    self._send_block_to_storage(node["addr"], block_id, block_sha256, payload)
-                    committed_node_ids.append(node["node_id"])
+                    target_nodes = alloc_res["nodes"]
+                    logger.info(f"Alocado nos nós: {[n['node_id'] for n in target_nodes]}", extra={"evento": "BLOCK_ALLOCATED", "identificador": block_id})
 
-                self._rpc_controller("COMMIT_BLOCK", {
-                    "file_id": file_id,
-                    "block_id": block_id,
-                    "node_ids": committed_node_ids,
-                }, identificador=block_id)
-                
-                block_index += 1
-                blocks_sent += 1
+                    committed_node_ids = []
+                    for node in target_nodes:
+                        self._send_block_to_storage(node["addr"], block_id, block_sha256, payload)
+                        committed_node_ids.append(node["node_id"])
 
-        self._rpc_controller("FINISH_WRITE", {
-            "file_id": file_id,
-            "file_sha256": file_sha256,
-        }, identificador=file_id)
-        
+                    self._rpc_controller("COMMIT_BLOCK", {
+                        "file_id": file_id,
+                        "block_id": block_id,
+                        "node_ids": committed_node_ids,
+                    }, identificador=block_id)
+
+                    block_index += 1
+                    blocks_sent += 1
+
+            self._rpc_controller("FINISH_WRITE", {
+                "file_id": file_id,
+                "file_sha256": file_sha256,
+            }, identificador=file_id)
+        except Exception:
+            # gravação incompleta é desfeita: o arquivo parcial não fica preso nem visível
+            try:
+                self._rpc_controller("ABORT_WRITE", {"file_id": file_id}, identificador=file_id)
+            except Exception:
+                pass
+            raise
+
         logger.info(f"Upload finalizado ({blocks_sent} blocos).", extra={"evento": "UPLOAD_END", "identificador": file_id})
         return {"file_id": file_id, "file_sha256": file_sha256, "blocks_count": blocks_sent}
-
     def get_file(self, remote_path: str, dest_path: str) -> str:
         logger.info(f"Iniciando download de '{remote_path}'", extra={"evento": "DOWNLOAD_START", "identificador": remote_path})
         

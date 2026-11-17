@@ -55,7 +55,7 @@ def test_read_of_corrupted_block_is_refused_and_quarantined(node, client):
     client._send_block_to_storage(node.addr, bid, sha(data), data)
     (node.storage_path / bid).write_bytes(b"bit rot")  
     
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         client._fetch_block_from_storage(node.addr, bid)
     assert not (node.storage_path / bid).exists()
     assert any(p.name.startswith(bid) for p in node.corrupt_path.iterdir())

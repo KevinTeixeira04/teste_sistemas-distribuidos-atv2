@@ -11,18 +11,12 @@ import time
 from src.controller.config import settings
 from src.controller.db import Database
 from src.controller.registry import NodeRegistry
+from src.controller.errors import RequestError
+from src.controller.handlers import register_handlers
 from src.wrapper import wrapperKazoo as wzk
 from concurrent.futures import ThreadPoolExecutor
 
 import zmq
-
-
-class RequestError(Exception):
-
-    def __init__(self, code: str, msg: str):
-        super().__init__(msg)
-        self.code = code
-        self.msg = msg
 
 
 CLIENT_ACTIONS = (
@@ -193,6 +187,7 @@ def leader():
     registry = NodeRegistry(settings, db)
     registry.start()
     server = ControllerServer(settings, db, registry)
+    register_handlers(server, db, registry, settings)
 
     def _on_signal(*_):
         _shutdown.set()

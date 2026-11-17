@@ -81,8 +81,7 @@ class StorageNodeServer:
 
             wrapperKazoo.register_storage(
                 self.node_id,
-                disks=[usage.total],
-                available=[usage.free],
+                disks=[wrapperKazoo.Disco("disk1", usage.total, usage.used)], #atualização para bater com o que tá no wrapper
                 addr=self.addr,
                 host=self.host,
             )
