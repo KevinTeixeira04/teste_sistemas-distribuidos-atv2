@@ -50,6 +50,7 @@ services:
       DB_PASSWORD: postgre
       SUSPECT_AFTER_S: "86400"
       DEAD_AFTER_S: "172800"
+      MAX_DISK_USAGE: "1.0"
     ports:
       - "5000:5000"
 
@@ -80,6 +81,20 @@ services:
       - ./data/node2:/data_blocks:Z
     ports:
       - "5556:5556"
+
+  storage-node-3:
+    build: .
+    container_name: dfs-storage-3
+    user: "0:0"
+    command: python -m src.storage.integrity_node --id node3 --host storage-node-3 --port 5557 --storage-path /data_blocks
+    depends_on:
+      - zookeeper
+    environment:
+      ZK_HOSTS: zookeeper:2181
+    volumes:
+      - ./data/node3:/data_blocks:Z
+    ports:
+      - "5557:5557"
 
 volumes:
   pg_data:

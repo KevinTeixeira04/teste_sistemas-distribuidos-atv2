@@ -13,6 +13,7 @@ from src.controller.db import Database
 from src.controller.registry import NodeRegistry
 from src.controller.errors import RequestError
 from src.controller.handlers import register_handlers
+from src.controller.replication import Replicator
 from src.wrapper import wrapperKazoo as wzk
 from concurrent.futures import ThreadPoolExecutor
 
@@ -177,10 +178,6 @@ class ControllerServer:
 
 
 def leader():
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(threadName)s %(message)s",
-    )
     db = Database(settings)
     db.connect()
     db.init_schema()
@@ -188,6 +185,8 @@ def leader():
     registry.start()
     server = ControllerServer(settings, db, registry)
     register_handlers(server, db, registry, settings)
+    replicator = Replicator(db, registry, settings)
+    replicator.start()
 
     def _on_signal(*_):
         _shutdown.set()
@@ -198,12 +197,17 @@ def leader():
     try:
         server.serve_forever()
     finally:
+        replicator.stop()
         registry.stop()
         db.close()
 _shutdown = threading.Event()
 
 
 def main():
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(threadName)s %(message)s",
+    )
     wzk.init()
     identifier = os.getenv("container_name") or socket.gethostname()
     while not _shutdown.is_set():
