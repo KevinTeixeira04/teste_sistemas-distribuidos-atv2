@@ -81,13 +81,17 @@ class NodeRegistry:
 
         logging.info("Monitoramento dos nós encerrado")
 
-    def _add_node(self, node_id: str):
+    def _load_from_zk(self, node_id: str) -> bool:
+        """
+        Carrega um nó do ZooKeeper para a memória. Idempotente: pode ser chamado
+        várias vezes para o mesmo nó. Retorna True se o nó existe e foi carregado.
+        """
         if self._stop_event.is_set():
-            return
+            return False
 
         result = wrapperKazoo.get_node(f"/storage/nodes/{node_id}")
         if result is None:
-            return
+            return False
 
         data, _ = result
 
@@ -106,32 +110,50 @@ class NodeRegistry:
             else:
                 raise ValueError("Formato de registro inválido")
 
+            # O znode pode trazer só o endereço; os discos chegam depois pelo heartbeat.
+            if disks is None:
+                disks = []
             if not isinstance(disks, list):
                 raise ValueError("A lista de discos é inválida")
 
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             logging.exception("Dados inválidos para o nó %s", node_id)
-            return
+            return False
 
-        draining = self.is_draining(node_id)
+        try:
+            draining = self.is_draining(node_id)
+        except Exception:
+            # falha no banco não pode impedir a descoberta do nó
+            logging.exception("Não foi possível ler o estado de drain de %s", node_id)
+            draining = False
 
         with self._lock:
             previous = self._nodes.get(node_id)
+            was_alive = previous is not None and previous.state == "ALIVE"
 
-            node = StorageNode(
+            self._nodes[node_id] = StorageNode(
                 node_id=node_id,
-                disks=disks,
-                last_seen=time.monotonic(),
+                disks=disks or (previous.disks if previous else []),
+                last_seen=time.monotonic(),  # período de graça antes de suspeitar
                 state="ALIVE",
                 addr=addr or (previous.addr if previous else None),
                 host=host or (previous.host if previous else None),
                 draining=draining,
             )
 
-            self._nodes[node_id] = node
+        # só notifica se for novo ou estava DEAD/SUSPECT
+        if not was_alive:
+            self._notify(node_id, "ALIVE")
+            logging.info("Nó %s descoberto", node_id)
+        return True
 
-        self._notify(node_id, "ALIVE")
-        logging.info("Nó %s descoberto", node_id)
+    def _add_node(self, node_id: str):
+        # Chamado pelo watch do kazoo. Nunca pode lançar: uma exceção aqui
+        # pode derrubar o watch inteiro e o controlador deixa de ver nós.
+        try:
+            self._load_from_zk(node_id)
+        except Exception:
+            logging.exception("Erro ao adicionar o nó %s", node_id)
 
     def _remove_node(self, node_id: str):
         if self._stop_event.is_set():
@@ -155,6 +177,12 @@ class NodeRegistry:
         disks: list | None = None,
     ):
         """Atualiza a última comunicação recebida de um nó."""
+        with self._lock:
+            known = node_id in self._nodes
+
+        if not known and not self._load_from_zk(node_id):
+            return False
+
         with self._lock:
             node = self._nodes.get(node_id)
 
@@ -228,7 +256,7 @@ class NodeRegistry:
     def is_draining(self, node_id: str) -> bool:
         with self.db.tx() as cur:
             cur.execute(
-                "SELECT draining FROM node_flags WHERE node_id = %s",
+                "SELECT draining FROM maquina WHERE nome = %s",
                 (node_id,),
             )
             result = cur.fetchone()
@@ -239,12 +267,10 @@ class NodeRegistry:
         with self.db.tx() as cur:
             cur.execute(
                 """
-                INSERT INTO node_flags (node_id, draining, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (node_id)
-                DO UPDATE SET
-                    draining = EXCLUDED.draining,
-                    updated_at = NOW()
+                INSERT INTO maquina (nome, draining)
+                VALUES (%s, %s)
+                ON CONFLICT (nome)
+                DO UPDATE SET draining = EXCLUDED.draining
                 """,
                 (node_id, draining),
             )

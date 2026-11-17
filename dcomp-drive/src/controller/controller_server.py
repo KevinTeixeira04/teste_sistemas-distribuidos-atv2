@@ -2,6 +2,8 @@
 
 import json
 import logging
+import os
+import socket
 import queue
 import signal
 import threading
@@ -192,23 +194,28 @@ def leader():
     registry.start()
     server = ControllerServer(settings, db, registry)
 
-    signal.signal(signal.SIGINT, lambda *_: server.request_stop())
-    signal.signal(signal.SIGTERM, lambda *_: server.request_stop())
+    def _on_signal(*_):
+        _shutdown.set()
+        server.request_stop()
+
+    signal.signal(signal.SIGINT, _on_signal)
+    signal.signal(signal.SIGTERM, _on_signal)
     try:
         server.serve_forever()
     finally:
         registry.stop()
         db.close()
-#revisar pq deve ta super errado
+_shutdown = threading.Event()
+
+
 def main():
     wzk.init()
-    while(True)
-        do:
-            election = wzk.ElectionController(os.getenv("container_name")) #n lembro
-        while election is None
+    identifier = os.getenv("container_name") or socket.gethostname()
+    while not _shutdown.is_set():
+        election = wzk.election_controller(identifier)
+        # bloqueia até virar líder; roda leader() e só retorna quando ele terminar
         election.run(leader)
-    
-    
+
 
 if __name__ == "__main__":
     main()
