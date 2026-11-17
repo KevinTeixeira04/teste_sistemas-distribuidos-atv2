@@ -54,7 +54,7 @@ def init():
         zk.ensure_path(path)
     logging.info("Init completo")
 
-def register_storage(name, disks:np.list[Disco], available, addr):
+def register_storage(name, disks:list[Disco], available, addr):
     """
     Registra um nó de armazenamento no ZooKeeper.
 
