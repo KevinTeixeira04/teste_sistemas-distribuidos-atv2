@@ -337,6 +337,74 @@ def report_corruption(cur, block_id: str, node_id: str) -> int:
     return cur.fetchone()["n"]
 
 
+
+def under_replicated_blocks(cur, alive_nodes: list[str], target: int) -> list[dict]:
+    #Os blocos mais urgentes (menos réplicas vivas) vêm primeiro.
+    #holders = nós que já têm ou estão recebendo o bloco/ sources = nós vivos com cópia OK
+    cur.execute(
+        """SELECT b.block_id, b.size_bytes, b.sha256,
+                  COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])) AS ok_alive,
+                  COALESCE(array_agg(r.maquina) FILTER (WHERE r.state IN ('OK', 'PENDENTE')), '{}') AS holders,
+                  COALESCE(array_agg(r.maquina) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])), '{}') AS sources
+           FROM blocks b
+           JOIN inodes i ON i.id = b.inode_id AND i.state = %(complete)s
+           LEFT JOIN replicas r ON r.block_id = b.block_id
+           GROUP BY b.block_id
+           HAVING COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])) < %(target)s
+           ORDER BY ok_alive, b.block_id""",
+        {"alive": list(alive_nodes), "target": target, "complete": COMPLETE},
+    )
+    return cur.fetchall()
+
+
+def start_repair(cur, block_id: str, node_id: str, disk: str):
+    #Reserva o destino da cópia: uma réplica pendente. Uma corrompida antiga no mesmo disco é descartada
+    cur.execute(
+        "DELETE FROM replicas WHERE block_id = %s AND maquina = %s AND disco = %s AND state = 'CORROMPIDA'",
+        (block_id, node_id, str(disk)),
+    )
+    add_pending_replicas(cur, block_id, [(node_id, disk)])
+
+
+def finish_repair(cur, block_id: str, node_id: str, disk: str) -> bool:
+    #Se o arquivo foi apagado durante a cópia, a cópia vira lixo
+    cur.execute(
+        "UPDATE replicas SET state = 'OK' WHERE block_id = %s AND maquina = %s AND disco = %s AND state = 'PENDENTE'",
+        (block_id, node_id, str(disk)),
+    )
+    if cur.rowcount == 0:
+        queue_gc(cur, block_id, node_id, disk)
+        return False
+    return True
+
+
+def cancel_repair(cur, block_id: str, node_id: str, disk: str, leftover: bool = False):
+    #Cópia falhou: some a PENDENTE. leftover=True quando o nó pode ter ficado com o bloco gravado
+    cur.execute(
+        "DELETE FROM replicas WHERE block_id = %s AND maquina = %s AND disco = %s AND state = 'PENDENTE'",
+        (block_id, node_id, str(disk)),
+    )
+    if leftover:
+        queue_gc(cur, block_id, node_id, disk)
+
+
+def queue_gc(cur, block_id: str, node_id: str, disk: str):
+    cur.execute(
+        "INSERT INTO gc_blocks (block_id, maquina, disco) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+        (block_id, node_id, str(disk)),
+    )
+
+
+def clear_stale_pending(cur) -> int:
+    #Ao assumir a liderança: pendente de arquivo já completo é cópia interrompida por uma queda
+    cur.execute(
+        """DELETE FROM replicas r USING blocks b, inodes i
+           WHERE r.state = 'PENDENTE' AND b.block_id = r.block_id AND i.id = b.inode_id AND i.state = %s""",
+        (COMPLETE,),
+    )
+    return cur.rowcount
+
+
 def _as_int(value, field: str) -> int:
     try:
         return int(value)

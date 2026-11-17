@@ -19,7 +19,7 @@ class StorageNode:
     addr: str | None = None
     host: str | None = None
     draining: bool = False
-
+    in_zk: bool = True   # False quando o znode efêmero sumiu
 
 class NodeRegistry:
     def __init__(
@@ -165,6 +165,7 @@ class NodeRegistry:
                 return
 
             node.state = "DEAD"
+            node.in_zk = False
 
         self._notify(node_id, "DEAD")
         logging.warning("Nó %s removido do ZooKeeper", node_id)
@@ -186,7 +187,7 @@ class NodeRegistry:
         with self._lock:
             node = self._nodes.get(node_id)
 
-            if node is None:
+            if node is None or not node.in_zk:
                 return False
 
             previous_state = node.state
@@ -222,7 +223,9 @@ class NodeRegistry:
 
                     elapsed = now - node.last_seen
 
-                    if elapsed >= self.cfg.dead_after_s:
+                    if not node.in_zk:
+                        new_state = "DEAD"   
+                    elif elapsed >= self.cfg.dead_after_s:
                         new_state = "DEAD"
                     elif elapsed >= self.cfg.suspect_after_s:
                         new_state = "SUSPECT"
