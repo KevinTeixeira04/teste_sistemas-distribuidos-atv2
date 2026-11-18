@@ -325,3 +325,42 @@ def test_usage_limit_can_be_changed_by_environment(db, registry, monkeypatch):
     from src.controller.handlers import Handlers
     monkeypatch.setenv("MAX_DISK_USAGE", "0.99")
     assert Handlers(db, registry, settings).max_usage == 0.99
+
+
+class FakeReplicator:
+    def status(self):
+        return {"in_progress": [{"block_id": "b", "source": "n1", "target": "n3"}],
+                "copied": 2, "failed": 1, "under_replicated_blocks": 3}
+
+
+def test_status_reports_nodes_files_and_replication(server, registry):
+    put(server, "/a.bin", blocks=2)
+
+    reply = ok(call(server, "STATUS"))
+    assert reply["replication_factor"] == 2
+    assert set(reply["nodes"]) == {"n1", "n2", "n3"}
+    assert sum(n["blocks"] for n in reply["nodes"].values()) == 4        
+    disk = reply["nodes"]["n1"]["disks"][0]
+    assert disk["usado"] == 10 * GB and disk["total"] == 100 * GB
+    assert reply["files"] == {"INTEGRO": 1, "SUBREPLICADO": 0, "SEM_REPLICA": 0}
+    assert reply["replication"] is None                                  
+
+
+def test_status_counts_files_by_replication_state(server, registry):
+    put(server, "/ok.bin", nodes=["n1", "n2"])
+    put(server, "/pouco.bin", nodes=["n1", "n3"])
+    put(server, "/nenhum.bin", nodes=["n2", "n3"])
+    registry.nodes["n3"]["state"] = "DEAD"
+    registry.nodes["n2"]["state"] = "DEAD"
+
+    files = ok(call(server, "STATUS"))["files"]
+    assert files == {"INTEGRO": 0, "SUBREPLICADO": 2, "SEM_REPLICA": 1}
+
+
+def test_status_shows_draining_and_replicator(server, registry):
+    registry.nodes["n2"]["draining"] = True
+    server._handlers["STATUS"].__self__.replicator = FakeReplicator()  
+
+    reply = ok(call(server, "STATUS"))
+    assert reply["nodes"]["n2"]["draining"] is True
+    assert reply["replication"]["copied"] == 2 and len(reply["replication"]["in_progress"]) == 1

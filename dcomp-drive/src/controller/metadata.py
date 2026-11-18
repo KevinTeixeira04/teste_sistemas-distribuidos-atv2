@@ -411,3 +411,36 @@ def _as_int(value, field: str) -> int:
         return int(value)
     except (TypeError, ValueError):
         raise MetadataError("BAD_REQUEST", f"campo '{field}' inválido") from None
+
+
+def replication_summary(cur, alive_nodes: list[str], target: int) -> dict:
+    """Quantos arquivos completos estão em cada estado de replicação (mesma regra do STAT)."""
+    cur.execute(
+        """WITH bloco AS (
+               SELECT b.inode_id, b.block_id,
+                      COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])) AS vivas
+               FROM blocks b LEFT JOIN replicas r ON r.block_id = b.block_id
+               GROUP BY b.inode_id, b.block_id
+           ), arquivo AS (
+               SELECT i.id, MIN(bl.vivas) AS menor
+               FROM inodes i LEFT JOIN bloco bl ON bl.inode_id = i.id
+               WHERE NOT i.is_dir AND i.state = %(complete)s
+               GROUP BY i.id
+           )
+           SELECT CASE WHEN menor IS NULL OR menor >= %(target)s THEN 'INTEGRO'
+                       WHEN menor = 0 THEN 'SEM_REPLICA'
+                       ELSE 'SUBREPLICADO' END AS estado,
+                  COUNT(*) AS arquivos
+           FROM arquivo GROUP BY 1""",
+        {"alive": list(alive_nodes), "target": target, "complete": COMPLETE},
+    )
+    summary = {"INTEGRO": 0, "SUBREPLICADO": 0, "SEM_REPLICA": 0}
+    for row in cur.fetchall():
+        summary[row["estado"]] = row["arquivos"]
+    return summary
+
+
+def blocks_per_node(cur) -> dict:
+    """Quantas réplicas confirmadas (OK) cada máquina guarda."""
+    cur.execute("SELECT maquina, COUNT(*) AS n FROM replicas WHERE state = 'OK' GROUP BY maquina")
+    return {row["maquina"]: row["n"] for row in cur.fetchall()}
