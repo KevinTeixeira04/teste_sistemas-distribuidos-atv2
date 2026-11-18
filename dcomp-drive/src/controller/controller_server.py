@@ -184,8 +184,9 @@ def leader():
     registry = NodeRegistry(settings, db)
     registry.start()
     server = ControllerServer(settings, db, registry)
-    register_handlers(server, db, registry, settings)
+    handlers = register_handlers(server, db, registry, settings)
     replicator = Replicator(db, registry, settings)
+    handlers.replicator = replicator  # o STATUS mostra as cópias em andamento
     replicator.start()
 
     def _on_signal(*_):

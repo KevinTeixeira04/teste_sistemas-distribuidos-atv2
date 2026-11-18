@@ -34,6 +34,7 @@ def register_handlers(server, db, registry, cfg):
         "RMDIR": h.rmdir,
         "MOVE": h.move,
         "STAT": h.stat,
+        "STATUS": h.status,
     }.items():
         server.register(action, handler)
     return h
@@ -72,6 +73,7 @@ class Handlers:
         self.max_usage = getattr(cfg, "max_disk_usage", float(os.getenv("MAX_DISK_USAGE", DEFAULT_MAX_USAGE)))
         # RF3: sem nós suficientes, aceitar como sub-replicado (True) ou rejeitar (False)
         self.allow_partial = getattr(cfg, "allow_partial_writes", True)
+        self.replicator = None  # o leader() preenche depois de criar o replicator
 
     @_translate_errors
     def init_write(self, req):
@@ -195,6 +197,36 @@ class Handlers:
             "replication_state": self._replication_state(blocks, nodes),
         })
         return info
+
+    @_translate_errors
+    def status(self, req):
+        """RF11: nós, espaço por disco, arquivos por estado de replicação e cópias em andamento."""
+        nodes = self.registry.get_nodes()
+        alive = [nid for nid, n in nodes.items() if n.get("state") == "ALIVE" and n.get("addr")]
+        wanted = self.cfg.replication_factor
+        with self.db.tx() as cur:
+            files = md.replication_summary(cur, alive, wanted)
+            blocks = md.blocks_per_node(cur)
+
+        report = {}
+        for node_id, node in nodes.items():
+            disks = [
+                {"nome": name, "total": total, "usado": total - available}
+                for name, total, available in placement._normalize_disks(node.get("disks"))
+            ]
+            report[node_id] = {
+                "state": node.get("state"),
+                "draining": bool(node.get("draining")),
+                "addr": node.get("addr"),
+                "blocks": blocks.get(node_id, 0),
+                "disks": disks,
+            }
+        return {
+            "replication_factor": wanted,
+            "nodes": report,
+            "files": files,
+            "replication": self.replicator.status() if self.replicator else None,
+        }
 
     @_translate_errors
     def list_dir(self, req):
