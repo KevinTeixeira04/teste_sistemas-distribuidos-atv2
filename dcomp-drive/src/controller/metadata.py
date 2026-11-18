@@ -345,7 +345,7 @@ def under_replicated_blocks(cur, alive_nodes: list[str], target: int) -> list[di
         """SELECT b.block_id, b.size_bytes, b.sha256,
                   COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[]) AND m.draining = FALSE) AS ok_alive,
                   COALESCE(array_agg(r.maquina) FILTER (WHERE r.state IN ('OK', 'PENDENTE')), '{}') AS holders,
-                  COALESCE(array_agg(r.maquina) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])), '{}') AS sources
+                  COALESCE(array_agg(r.maquina) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[]) AND m.draining = FALSE), '{}') AS sources
            FROM blocks b
            JOIN inodes i ON i.id = b.inode_id AND i.state = %(complete)s
            LEFT JOIN replicas r ON r.block_id = b.block_id
