@@ -266,11 +266,15 @@ class NodeRegistry:
 
         return bool(result["draining"]) if result else False
 
+    def _field(node, name: str):
+        return node.get(name) if isinstance(node, dict) else getattr(node, name, None)
+
     def set_draining(self, nome_maquina: str):
         """
         Começa o drain de uma maquina
         """
         with wrapperKazoo.lock_drain(): #Só teremos o drain de uma máquina por vez
+            logging.info(f"lock_drain adquirido por {nome_maquina}, iniciando o drain...")
             with self.db.tx() as cur:
                 cur.execute(
                     """
@@ -281,7 +285,48 @@ class NodeRegistry:
                     """,
                     (nome_maquina, True),
                 )
+            alive = {
+                        node_id: node for node_id, node in self.registry.get_nodes().items()
+                        if node.get("state") == "ALIVE" and node.get("addr")
+                    }
             # Até o drain acabar ...
+            while True:
+                #if time.monotonic() - inicio > timeout:
+                #    raise TimeoutError(f"drain de {nome_maquina} excedeu {timeout}s")
+
+                with self.db.tx() as cur:
+                    cur.execute("""
+                        SELECT COUNT(*) FROM (
+                            SELECT b.block_id
+                            FROM blocks b
+                            JOIN inodes i ON i.id = b.inode_id AND i.state = 'COMPLETO'
+                            JOIN replicas r_d ON r_d.block_id = b.block_id
+                                            AND r_d.maquina = %(m)s
+                            LEFT JOIN replicas r2 ON
+                                r2.block_id = b.block_id
+                                AND r2.state = 'OK'
+                                AND r2.maquina != %(m)s
+                                AND r2.maquina = ANY(%(alive)s::text[])
+                                AND r2.maquina IN (
+                                    SELECT nome FROM maquina WHERE draining = FALSE
+                                )
+                            GROUP BY b.block_id
+                            HAVING COUNT(r2.block_id) < %(target)s
+                        ) sub
+                    """, {
+                        "m": nome_maquina,
+                        "alive": alive,
+                        "target": self.cfg.replication_factor,
+                    })
+                    pendentes = cur.fetchone()[0]
+
+                if pendentes == 0:
+                    logging.info(f"drain de {nome_maquina}: todos os blocos re-replicados")
+                    break
+
+            logging.info(f"drain de {nome_maquina}: {pendentes} blocos pendentes, aguardando...")
+            #time.sleep(poll_interval)
+            logging.info(f"drain em {nome_maquina} finalizado.")
             
             
 
