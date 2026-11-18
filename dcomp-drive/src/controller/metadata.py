@@ -345,13 +345,13 @@ def under_replicated_blocks(cur, alive_nodes: list[str], target: int) -> list[di
         """SELECT b.block_id, b.size_bytes, b.sha256,
                   COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[]) AND m.draining = FALSE) AS ok_alive,
                   COALESCE(array_agg(r.maquina) FILTER (WHERE r.state IN ('OK', 'PENDENTE')), '{}') AS holders,
-                  COALESCE(array_agg(r.maquina) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[]) AND m.draining = FALSE), '{}') AS sources
+                  COALESCE(array_agg(r.maquina) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])), '{}') AS sources
            FROM blocks b
            JOIN inodes i ON i.id = b.inode_id AND i.state = %(complete)s
            LEFT JOIN replicas r ON r.block_id = b.block_id
            LEFT JOIN maquina m ON m.nome = r.maquina
            GROUP BY b.block_id
-           HAVING COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])) < %(target)s
+           HAVING COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[]) AND m.draining = FALSE) < %(target)s
            ORDER BY ok_alive, b.block_id""",
         {"alive": list(alive_nodes), "target": target, "complete": COMPLETE},
     )
