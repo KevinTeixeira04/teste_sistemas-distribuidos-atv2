@@ -212,3 +212,21 @@ class DFSClient:
     def delete_file(self, remote_path: str):
         logger.info(f"Solicitando exclusão", extra={"evento": "DELETE_FILE", "identificador": remote_path})
         self._rpc_controller("DELETE_FILE", {"remote_path": remote_path}, identificador=remote_path)
+
+    def make_dir(self, remote_path: str) -> bool:
+        logger.info("Criando diretório", extra={"evento": "MKDIR", "identificador": remote_path})
+        res = self._rpc_controller("MKDIR", {"remote_path": remote_path}, identificador=remote_path)
+        return res.get("created", False)
+
+    def remove_dir(self, remote_path: str):
+        logger.info("Removendo diretório", extra={"evento": "RMDIR", "identificador": remote_path})
+        self._rpc_controller("RMDIR", {"remote_path": remote_path}, identificador=remote_path)
+
+    def move(self, src_path: str, dst_path: str):
+        logger.info(f"Movendo para '{dst_path}'", extra={"evento": "MOVE", "identificador": src_path})
+        self._rpc_controller("MOVE", {"src_path": src_path, "dst_path": dst_path}, identificador=src_path)
+
+    def stat(self, remote_path: str) -> dict:
+        logger.info("Consultando metadados", extra={"evento": "STAT", "identificador": remote_path})
+        res = self._rpc_controller("STAT", {"remote_path": remote_path}, identificador=remote_path)
+        return {k: v for k, v in res.items() if k not in ("req_id", "status", "code")}
