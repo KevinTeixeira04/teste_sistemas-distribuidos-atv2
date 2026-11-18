@@ -50,6 +50,45 @@ def print_stat(path: str, info: dict):
         print(f"    {item['block_id']}: {', '.join(item['nodes'])}")
 
 
+NODE_STATES = {"ALIVE": "VIVO", "SUSPECT": "SUSPEITO", "DEAD": "MORTO"}
+
+
+def format_bytes(value) -> str:
+    value = float(value)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024:
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"
+
+
+def print_status(info: dict):
+    print(f"Nós (fator de replicação {info.get('replication_factor')}):")
+    for node_id, node in sorted(info.get("nodes", {}).items()):
+        estado = NODE_STATES.get(node.get("state"), node.get("state"))
+        if node.get("draining"):
+            estado += " (em drain)"
+        print(f"  {node_id}: {estado}, blocos: {node.get('blocks', 0)}")
+        for disk in node.get("disks", []):
+            percent = 100 * disk["usado"] / disk["total"] if disk["total"] else 0
+            print(f"    {disk['nome']}: {format_bytes(disk['usado'])} de {format_bytes(disk['total'])} ({percent:.0f}%)")
+
+    files = info.get("files", {})
+    print("Arquivos por estado de replicação:")
+    for estado in ("INTEGRO", "SUBREPLICADO", "SEM_REPLICA"):
+        print(f"  {estado}: {files.get(estado, 0)}")
+
+    rep = info.get("replication")
+    if rep is None:
+        print("Re-replicação: indisponível")
+        return
+    print(f"Re-replicação: {len(rep.get('in_progress', []))} em andamento, "
+          f"{rep.get('under_replicated_blocks', 0)} bloco(s) pendente(s), "
+          f"{rep.get('copied', 0)} concluída(s), {rep.get('failed', 0)} falha(s)")
+    for item in rep.get("in_progress", []):
+        print(f"    {item.get('block_id')}: {item.get('source')} -> {item.get('target')}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="CLI do Cliente - DFS")
     parser.add_argument("--controller", default=os.getenv("DFS_CONTROLLER", "tcp://localhost:5000"))
@@ -89,6 +128,8 @@ def main():
     stat_p = subparsers.add_parser("stat", help="Mostra os metadados e o estado de replicação")
     stat_p.add_argument("remote_path")
 
+    subparsers.add_parser("status", help="Mostra nós, espaço, arquivos por estado e re-replicações em andamento")
+
     args = parser.parse_args()
 
     if args.command == "keygen":
@@ -121,6 +162,8 @@ def main():
             client.move(args.src_path, args.dst_path)
         elif args.command == "stat":
             print_stat(args.remote_path, client.stat(args.remote_path))
+        elif args.command == "status":
+            print_status(client.status())
     except Exception as e:
         logging.getLogger("ClienteDFS").error(f"Operação abortada: {str(e)}")
         sys.exit(1)

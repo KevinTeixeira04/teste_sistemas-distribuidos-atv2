@@ -213,6 +213,11 @@ class DFSClient:
         logger.info(f"Solicitando exclusão", extra={"evento": "DELETE_FILE", "identificador": remote_path})
         self._rpc_controller("DELETE_FILE", {"remote_path": remote_path}, identificador=remote_path)
 
+    def status(self) -> dict:
+        logger.info("Consultando o estado do sistema", extra={"evento": "STATUS", "identificador": "-"})
+        res = self._rpc_controller("STATUS", {}, identificador="-")
+        return {k: v for k, v in res.items() if k not in ("req_id", "status", "code")}
+
     def make_dir(self, remote_path: str) -> bool:
         logger.info("Criando diretório", extra={"evento": "MKDIR", "identificador": remote_path})
         res = self._rpc_controller("MKDIR", {"remote_path": remote_path}, identificador=remote_path)

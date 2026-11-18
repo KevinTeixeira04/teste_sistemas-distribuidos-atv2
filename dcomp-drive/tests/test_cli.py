@@ -49,3 +49,16 @@ def test_errors_exit_with_code_1(cluster, monkeypatch):
     with pytest.raises(SystemExit) as info:
         run_cli(monkeypatch, client, "rmdir", "/nao-existe")
     assert info.value.code == 1
+
+
+def test_status_command_prints_nodes_files_and_replication(cluster, tmp_path, monkeypatch, capsys):
+    client, _, registry = cluster
+    client.put_file(str(make_file(tmp_path, 2000)), "/a.bin")
+    registry.nodes["n1"]["draining"] = True
+
+    run_cli(monkeypatch, client, "status")
+    out = capsys.readouterr().out
+    assert "Nós (fator de replicação 2)" in out
+    assert "n1: VIVO (em drain)" in out and "n2: VIVO, blocos:" in out
+    assert "INTEGRO: 1" in out and "SUBREPLICADO: 0" in out
+    assert "Re-replicação: indisponível" in out     
