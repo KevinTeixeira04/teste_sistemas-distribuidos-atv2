@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Callable
 
 from src.wrapper import wrapperKazoo
+from src.controller import replication as rep
 
 
 @dataclass
@@ -266,22 +267,37 @@ class NodeRegistry:
 
         return bool(result["draining"]) if result else False
 
-    def set_draining(self, node_id: str, draining: bool):
-        with self.db.tx() as cur:
-            cur.execute(
-                """
-                INSERT INTO maquina (nome, draining)
-                VALUES (%s, %s)
-                ON CONFLICT (nome)
-                DO UPDATE SET draining = EXCLUDED.draining
-                """,
-                (node_id, draining),
-            )
+    def set_draining(self, nome_maquina: str):
+        """
+        Começa o drain de uma maquina
+        """
+        with wrapperKazoo.lock_drain(): #Só teremos o drain de uma máquina por vez
+            with self.db.tx() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO maquina (nome, draining)
+                    VALUES (%s, %s)
+                    ON CONFLICT (nome)
+                    DO UPDATE SET draining = EXCLUDED.draining
+                    """,
+                    (nome_maquina, True),
+                )
+            #with self.db.tx() as cur:
+            #   blocks = cur.execute(
+            #        """
+            #        SELECT replicas.block_id, COUNT(*) FROM 
+            #        replicas JOIN maquina ON (replicas.maquina = maquina.nome)
+            #        GROUP BY replicas.block_id
+            #        """
+            #    ).fetchall()
+            remaining = 1
+            while(remaining > 0):
+                remaining = rep.run_once()
+            
+            
 
-        with self._lock:
-            node = self._nodes.get(node_id)
-            if node:
-                node.draining = draining
+            
+
 
     def _notify(self, node_id: str, state: str):
         if self.on_change:
