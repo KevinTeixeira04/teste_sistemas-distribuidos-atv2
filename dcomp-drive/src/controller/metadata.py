@@ -349,7 +349,7 @@ def under_replicated_blocks(cur, alive_nodes: list[str], target: int) -> list[di
            FROM blocks b
            JOIN inodes i ON i.id = b.inode_id AND i.state = %(complete)s
            LEFT JOIN replicas r ON r.block_id = b.block_id
-           LEFT JOIN maquinas m ON m.nome = r.maquina
+           LEFT JOIN maquina m ON m.nome = r.maquina
            GROUP BY b.block_id
            HAVING COUNT(r.block_id) FILTER (WHERE r.state = 'OK' AND r.maquina = ANY(%(alive)s::text[])) < %(target)s
            ORDER BY ok_alive, b.block_id""",
